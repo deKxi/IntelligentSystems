@@ -15,22 +15,25 @@
 # pip install scikit-learn
 # pip install pandas-datareader
 # pip install yfinance
+from cgi import test
 from collections import deque # Added - Weekly Report 2
 
 import numpy as np
 import matplotlib.pyplot as plt
+
 import pandas as pd
 import pandas_datareader as web
 import datetime as dt
 import tensorflow as tf
 import yfinance as yf
+import mplfinance as mpf
+import matplotlib.dates as mdates
 
 import os # Added - Weekly Report 2
 from sklearn.model_selection import train_test_split # Added - Weekly Report 2
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, LSTM, InputLayer
-
 
 DATA_SOURCE = "yahoo"
 COMPANY = "TSLA"
@@ -39,20 +42,24 @@ COMPANY = "TSLA"
 TRAIN_START = '2015-01-01'
 TRAIN_END = '2020-01-01'
 
+TEST_START = '2020-01-02'
+TEST_END = '2022-12-31'
+
 PREDICTION_DAYS_PAST = 60 # Modified variable name for clarity
 ### Newly Added - Weekly Report 2
-PREDICT_DAYS_AHEAD = 1 
+PREDICT_DAYS_AHEAD = 1
 TEST_SIZE = 0.2
 SHUFFLE_DATASET = True
 SPLIT_BY_DATE = True
-FEATURE_COLUMNS = ['Open', 'High', 'Low', 'Close', 'Volume']
+FEATURE_COLUMNS = ['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
 PRICE_VALUE = "Close"
-LOCAL_SAVE=True
-LOCAL_LOAD=True
-LOCAL_PATH='./data'
-SCALE_FEATURES=True
-EPOCHS=25
-BATCH_SIZE=32
+LOCAL_SAVE = True
+LOCAL_LOAD = True
+LOCAL_PATH = './data'
+SCALE_FEATURES = True
+EPOCHS = 25
+BATCH_SIZE = 32
+LOSS = "mean_absolute_error"
 
 # Pinched from P1
 def shuffle_in_unison(a, b):
@@ -70,7 +77,8 @@ def shuffle_in_unison(a, b):
 # If not, save the data into a directory
 #------------------------------------------------------------------------------
 
-def load_data_and_process(company, data_source, start_date, end_date, predict_days,
+def load_data_and_process(company, data_source, predict_days,
+                          train_start_date, train_end_date, 
                           scale=True, split_by_date=True, test_size=0.5, shuffle=True,
                           feature_columns=FEATURE_COLUMNS, prediction_stepsize=1,
                           load_local=True, save_local=True, local_path=LOCAL_PATH):
@@ -101,15 +109,16 @@ def load_data_and_process(company, data_source, start_date, end_date, predict_da
             y_test (np.array): the testing labels
             test_df (pd.DataFrame): the testing dataframe           
     """
+    # -------- Load the data --------
     # Check if data has been prepared before.
     if load_local and os.path.exists(os.path.join(local_path, company + '.csv')):
         # Load the saved data as a dataframe from local storage
-        data = pd.read_csv(os.path.join(local_path, company + '.csv'))
+        data = pd.read_csv(os.path.join(local_path, company + '.csv'), parse_dates=True, index_col=0)
     else:
         # Download the data as a dataframe
         if isinstance(company, str):
             if data_source == "yahoo":
-                data = yf.download(company, start=start_date, end=end_date, progress=False)
+                data = yf.download(company, start=train_start_date, end=train_end_date, progress=False, parse_dates=True, index_col=0)
             else:
                 raise ValueError("'data_source' str value can only be 'yahoo' for now")
 
@@ -122,6 +131,8 @@ def load_data_and_process(company, data_source, start_date, end_date, predict_da
             data = company
         else:
             raise TypeError("'company' variable must be either: str or `pd.DataFrame`")
+        
+        # -------- Save the data ----
 
         # Save the data into a directory
         if save_local:
@@ -129,7 +140,10 @@ def load_data_and_process(company, data_source, start_date, end_date, predict_da
             data.to_csv(os.path.join(local_path, company + '.csv'))
 
     result = {} # Storing result in a dict for convenience
+    #data["date"] = data.index
     result['df'] = data.copy() # include original dataframe copy too
+
+    # -------- Process the data --------
 
     # Make sure that all feature_columns exist in the dataframe
     for col in feature_columns:
@@ -138,7 +152,9 @@ def load_data_and_process(company, data_source, start_date, end_date, predict_da
 
     # Add date as a column
     if "date" not in data.columns:
+        # ensuring we have a stored DatetimeIndex for the dataframe
         data["date"] = data.index
+
 
     if scale:
         column_scaler = {}
@@ -182,7 +198,7 @@ def load_data_and_process(company, data_source, start_date, end_date, predict_da
     # This loop iterates through the DataFrame rows, creating sequences 
     # of length predict_days from the feature_columns data and appending
     # the corresponding future target value. 
-    for entry, target in zip(data[feature_columns + ["date"]].values, data["future"].values):
+    for entry, target in zip(data[feature_columns + ["date"]].values, data['future'].values):
         # zip() returns an iterator of tuples, in this case we are zipping the
         # feature_columns and the 'future' (target) column for each row in the dataframe
         # (So each tuple is a a pair of (feature_columns, 'future'))
@@ -194,6 +210,9 @@ def load_data_and_process(company, data_source, start_date, end_date, predict_da
         if len(sequences) == predict_days:
             # Sequences and targets are stored in the sequence_data list.
             sequence_data.append([np.array(sequences), target])
+            # DatetimeIndex is stored in the dates list, and used to select the
+            # corresponding rows from the original DataFrame later (splitting test and training data)
+
 
     # Here we prepare the final sequence for predicting future stock prices,
     # by combining all remaining entries from the deque sequences and the last
@@ -226,7 +245,8 @@ def load_data_and_process(company, data_source, start_date, end_date, predict_da
         result["y_train"] = train_y[:train_samples]
         result["x_test"]  = train_x[train_samples:]
         result["y_test"]  = train_y[train_samples:]
-  
+
+
         if shuffle: # training and testing datasets are shuffled.
             # Using function shuffle_in_unison() borrowed from P1
             shuffle_in_unison(result["x_train"], result["y_train"])
@@ -236,13 +256,22 @@ def load_data_and_process(company, data_source, start_date, end_date, predict_da
         result["x_train"], result["x_test"], result["y_train"], result["y_test"] = \
             train_test_split(train_x, train_y, test_size=test_size, shuffle=shuffle)
 
-    # result["x_train"] and result["x_test"] are three-dimensional arrays, where the second 
+    # result["x_train"] and result["x_test"] are three-dimensional arrays, where the second
     # dimension contains the sequences and the third dimension holds the features and the date.
+    
+
+    # get the list of test set dates
     dates = result["x_test"][:, -1, -1]
     # Since the third dimension of result["x_test"] holds the date information for each sequence,
     # we can extract the date of each test sequence with [:, -1, -1] and store it in an array 'dates'.
 
+    
     result["test_df"] = result["df"].loc[dates]
+    # We then use the dates array to select the corresponding rows from the original DataFrame
+    # and store the resulting DataFrame in result["test_df"].
+    # Note that the dates array contains duplicate dates, so the resulting DataFrame will also
+    # contain duplicate rows. We can remove these duplicate rows later.
+
     # result["df"] holds the original DataFrame containing the entire dataset.
     # we can use the extracted dates array to index and select rows from the original
     # DataFrame, effectively creating a new DataFrame containing only the rows
@@ -263,10 +292,10 @@ def load_data_and_process(company, data_source, start_date, end_date, predict_da
     return result # Return the result dict containing the processed data
 
 loaded_data = load_data_and_process(company=COMPANY,
-                                    data_source=DATA_SOURCE,
-                                    start_date=TRAIN_START,
-                                    end_date=TRAIN_END,
+                                    data_source=DATA_SOURCE,                                   
                                     predict_days=PREDICTION_DAYS_PAST,
+                                    train_start_date=TRAIN_START,
+                                    train_end_date=TRAIN_END,
                                     scale=SCALE_FEATURES,
                                     split_by_date=SPLIT_BY_DATE,
                                     test_size=TEST_SIZE,
@@ -280,58 +309,76 @@ loaded_data = load_data_and_process(company=COMPANY,
 #------------------------------------------------------------------------------
 # Build the Model
 ## TO DO:
-# 1) Check if data has been built before. 
-# If so, load the saved data
-# If not, save the data into a directory
-# 2) Change the model to increase accuracy?
+# Change the model to increase accuracy?
 #------------------------------------------------------------------------------
-model = Sequential() # Basic neural network
-# See: https://www.tensorflow.org/api_docs/python/tf/keras/Sequential
-# for some useful examples
+def create_model(sequence_length, n_features, units=50, cell=LSTM, n_layers=2, dropout=0.2,
+                loss="mean_absolute_error", optimizer="adam"):
+    """
+    Params:
+        sequence_length (int): the number of days to look back to base the prediction
+        n_features (int): the number of features to use to feed into the model
+        units (int): the number of units in each layer
+        cell (LSTM/GRU): the type of cell to use
+        n_layers (int): the number of layers
+        dropout (float): the dropout rate
+        loss (str): the loss function
+        optimizer (str): the optimizer function
 
-model.add(LSTM(units=50, return_sequences=True, input_shape=(PREDICTION_DAYS_PAST, len(FEATURE_COLUMNS))))
-# This is our first hidden layer which also spcifies an input layer. 
-# That's why we specify the input shape for this layer; 
-# i.e. the format of each training example
-# The above would be equivalent to the following two lines of code:
-# model.add(InputLayer(input_shape=(x_train.shape[1], 1)))
-# model.add(LSTM(units=50, return_sequences=True))
-# For som eadvances explanation of return_sequences:
-# https://machinelearningmastery.com/return-sequences-and-return-states-for-lstms-in-keras/
-# https://www.dlology.com/blog/how-to-use-return_state-or-return_sequences-in-keras/
-# As explained there, for a stacked LSTM, you must set return_sequences=True 
-# when stacking LSTM layers so that the next LSTM layer has a 
-# three-dimensional sequence input. 
+    Returns:
+        model (tf.keras.src.engine.sequential.Sequential): the model
+    """
+    model = Sequential()# Basic neural network
+    # See: https://www.tensorflow.org/api_docs/python/tf/keras/Sequential
+    # for some useful examples
+    for i in range(n_layers):
+        if i == 0:
+            # first layer
+            model.add(cell(units, return_sequences=True, batch_input_shape=(None, sequence_length, n_features)))
+            # This is our first hidden layer which also spcifies an input layer. 
+            # That's why we specify the input shape for this layer; 
+            # i.e. the format of each training example
+            # The above would be equivalent to the following two lines of code:
+            # model.add(InputLayer(input_shape=(x_train.shape[1], 1)))
+            # model.add(LSTM(units=50, return_sequences=True))
+            # For advanced explanation of return_sequences:
+            # https://machinelearningmastery.com/return-sequences-and-return-states-for-lstms-in-keras/
+            # https://www.dlology.com/blog/how-to-use-return_state-or-return_sequences-in-keras/
+            # As explained there, for a stacked LSTM, you must set return_sequences=True 
+            # when stacking LSTM layers so that the next LSTM layer has a 
+            # three-dimensional sequence input. 
 
-# Finally, units specifies the number of nodes in this layer.
-# This is one of the parameters you want to play with to see what number
-# of units will give you better prediction quality (for your problem)
+            # Finally, units specifies the number of nodes in this layer.
+            # This is one of the parameters you want to play with to see what number
+            # of units will give you better prediction quality (for your problem)
+        elif i == n_layers - 1:
+            # last layer
+            model.add(cell(units=units, return_sequences=False))
+        else:
+            # hidden layers
+            model.add(cell(units=units, return_sequences=True))
+            # More on Stacked LSTM:
+            # https://machinelearningmastery.com/stacked-long-short-term-memory-networks/
+        # add dropout after each layer
+        model.add(Dropout(dropout))
+        # The Dropout layer randomly sets input units to 0 with a frequency of 
+        # rate (= 0.2 above) at each step during training time, which helps 
+        # prevent overfitting (one of the major problems of ML). 
+    model.add(Dense(units=1, activation="linear"))
+    # Prediction of the next closing value of the stock price
 
-model.add(Dropout(0.2))
-# The Dropout layer randomly sets input units to 0 with a frequency of 
-# rate (= 0.2 above) at each step during training time, which helps 
-# prevent overfitting (one of the major problems of ML). 
+    # We compile the model by specify the parameters for the model
+    # See lecture Week 6 (COS30018)
+    model.compile(loss=loss, metrics=["mean_absolute_error"], optimizer=optimizer)
+    # The optimizer and loss are two important parameters when building an 
+    # ANN model. Choosing a different optimizer/loss can affect the prediction
+    # quality significantly. You should try other settings to learn; e.g.
+        
+    # optimizer='rmsprop'/'sgd'/'adadelta'/...
+    # loss='mean_absolute_error'/'huber_loss'/'cosine_similarity'/...
+    return model
 
-model.add(LSTM(units=50, return_sequences=True))
-# More on Stacked LSTM:
-# https://machinelearningmastery.com/stacked-long-short-term-memory-networks/
-
-model.add(Dropout(0.2))
-model.add(LSTM(units=50))
-model.add(Dropout(0.2))
-
-model.add(Dense(units=1)) 
-# Prediction of the next closing value of the stock price
-
-# We compile the model by specify the parameters for the model
-# See lecture Week 6 (COS30018)
-model.compile(optimizer='adam', loss='mean_squared_error')
-# The optimizer and loss are two important parameters when building an 
-# ANN model. Choosing a different optimizer/loss can affect the prediction
-# quality significantly. You should try other settings to learn; e.g.
-    
-# optimizer='rmsprop'/'sgd'/'adadelta'/...
-# loss='mean_absolute_error'/'huber_loss'/'cosine_similarity'/...
+model = create_model(sequence_length=PREDICTION_DAYS_PAST, n_features=len(FEATURE_COLUMNS),
+                     loss=LOSS, units=50, cell=LSTM, n_layers=2)
 
 # Now we are going to train this model with our training data 
 # (x_train, y_train)
@@ -361,92 +408,51 @@ model.fit(loaded_data['x_train'], loaded_data['y_train'], epochs=EPOCHS, batch_s
 # Test the model accuracy on existing data
 #------------------------------------------------------------------------------
 # Load the test data
-TEST_START = '2020-01-02'
-TEST_END = '2022-12-31'
-test_data = yf.download(COMPANY, start=TRAIN_START, end=TRAIN_END, progress=False)
 
-'''
-test_data = load_data_and_process(company=COMPANY,
-                                    data_source=DATA_SOURCE,
-                                    start_date=TEST_START,
-                                    end_date=TEST_END,
-                                    predict_days=PREDICTION_DAYS_PAST,
-                                    scale=SCALE_FEATURES,
-                                    split_by_date=SPLIT_BY_DATE,
-                                    test_size=TEST_SIZE,
-                                    shuffle=SHUFFLE_DATASET,
-                                    feature_columns=FEATURE_COLUMNS,
-                                    prediction_stepsize=PREDICT_DAYS_AHEAD,
-                                    load_local=False,
-                                    save_local=False)
-'''
-# The above bug is the reason for the following line of code
-test_data = test_data[1:]
+test_data = loaded_data['test_df']#.drop(columns=['Date'])
 
-actual_prices = test_data[PRICE_VALUE].values
+actual_prices = loaded_data['test_df'][PRICE_VALUE].values
 
-total_dataset = pd.concat((loaded_data['df'][PRICE_VALUE], test_data[PRICE_VALUE]), axis=0)
 
-model_inputs = total_dataset[len(total_dataset) - len(test_data) - PREDICTION_DAYS_PAST:].values
-# We need to do the above because to predict the closing price of the fisrt
+# We need to do the following because to predict the closing price of the fisrt
 # PREDICTION_DAYS of the test period [TEST_START, TEST_END], we'll need the 
 # data from the training period
+total_dataset = pd.concat((loaded_data['df'][FEATURE_COLUMNS], test_data[FEATURE_COLUMNS]), axis=0)
 
-model_inputs = model_inputs.reshape(-1, 1)
-# TO DO: Explain the above line
-model_inputs = loaded_data["column_scaler"][PRICE_VALUE].transform(model_inputs)
-# We again normalize our closing price data to fit them into the range (0,1)
-# using the same scaler used above 
-# However, there may be a problem: scaler was computed on the basis of
-# the Max/Min of the stock price for the period [TRAIN_START, TRAIN_END],
-# but there may be a lower/higher price during the test period 
-# [TEST_START, TEST_END]. That can lead to out-of-bound values (negative and
-# greater than one)
-# We'll call this ISSUE #2
+model_inputs = total_dataset[len(total_dataset) - len(test_data) - PREDICTION_DAYS_PAST:].values
 
-# TO DO: Generally, there is a better way to process the data so that we 
-# can use part of it for training and the rest for testing. You need to 
-# implement such a way
-
-#------------------------------------------------------------------------------
-# Make predictions on test data
-#------------------------------------------------------------------------------
+# Normalize the data within each column using the column scaler value
+for i, feat in enumerate(FEATURE_COLUMNS):
+    print(i, feat)
+    print(model_inputs.shape)
+    model_inputs[:, i] = loaded_data["column_scaler"][feat].transform(model_inputs[:, i].reshape(-1, 1)).reshape(-1)
+    #------------------------------------------------------------------------------
+    # Make predictions on test data
+    #------------------------------------------------------------------------------
 x_test = []
 for x in range(PREDICTION_DAYS_PAST, len(model_inputs)):
-    x_test.append(model_inputs[x - PREDICTION_DAYS_PAST:x, 0])
+    x_test.append(model_inputs[x-PREDICTION_DAYS_PAST:x])
+
 
 x_test = np.array(x_test)
-x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], 1))
-# TO DO: Explain the above 5 lines
+x_train = np.reshape(x_test, (-1, x_test.shape[1], len(FEATURE_COLUMNS)))
+# Reshaping the data into the format that the model expects:
+# (number of samples, number of time steps, number of features per sample)
 
-predicted_prices = model.predict(x_test)
-predicted_prices = loaded_data["column_scaler"][PRICE_VALUE].inverse_transform(predicted_prices)
+predicted_prices = model.predict(x_test).reshape(-1)
 # Clearly, as we transform our data into the normalized range (0,1),
 # we now need to reverse this transformation 
-#------------------------------------------------------------------------------
-# Plot the test predictions
-## To do:
-# 1) Candle stick charts
-# 2) Chart showing High & Lows of the day
-# 3) Show chart of next few days (predicted)
-#------------------------------------------------------------------------------
-
-plt.plot(actual_prices, color="black", label=f"Actual {COMPANY} Price")
-plt.plot(predicted_prices, color="green", label=f"Predicted {COMPANY} Price")
-plt.title(f"{COMPANY} Share Price")
-plt.xlabel("Time")
-plt.ylabel(f"{COMPANY} Share Price")
-plt.legend()
-plt.show()
 
 #------------------------------------------------------------------------------
 # Predict next day
 #------------------------------------------------------------------------------
 
+real_data = []
+for x in range(PREDICTION_DAYS_PAST, len(model_inputs)):
+    real_data.append(model_inputs[x-PREDICTION_DAYS_PAST:x])
 
-real_data = [model_inputs[len(model_inputs) - PREDICTION_DAYS_PAST:, 0]]
 real_data = np.array(real_data)
-real_data = np.reshape(real_data, (real_data.shape[0], real_data.shape[1], 1))
+real_data = np.reshape(real_data, (-1, real_data.shape[1], len(FEATURE_COLUMNS)))
 
 prediction = model.predict(real_data)
 prediction = loaded_data["column_scaler"][PRICE_VALUE].inverse_transform(prediction)
@@ -466,3 +472,93 @@ print(f"Prediction: {prediction}")
 # the stock price:
 # https://github.com/jason887/Using-Deep-Learning-Neural-Networks-and-Candlestick-Chart-Representation-to-Predict-Stock-Market
 # Can you combine these different techniques for a better prediction??
+
+#------------------------------------------------------------------------------
+# Plot the test predictions
+#------------------------------------------------------------------------------
+
+CANDLE_VIS_WINDOW = 10
+BOX_VIS_WINDOW = 60
+
+def plot_candlestick_chart(data, window_size=1, title="Candlestick Chart"):
+    """
+    Plot a candlestick chart for stock market financial data.
+
+    Args:
+        data (pd.DataFrame): The financial data with columns 'Open', 'High', 'Low', 'Close', and 'Date'.
+        candlestick_window (int): The number of consecutive trading days to represent as a single candlestick.
+        title (str): The title of the chart.
+
+    Returns:
+        None (displays the chart).
+    """
+    # Resample the data to create candlesticks representing 'candlestick_window' days.
+    # Resample works by grouping the data by a certain time period and then aggregating
+    # the data within each time period. In this case, we group by 'candlestick_window' days
+    # and aggregate using the first, max, min, and last prices for each group.
+    plot_data = data.resample(f'{window_size}D').agg({'Open': 'first',
+                                                      'High': 'max',
+                                                      'Low': 'min',
+                                                      'Close': 'last'})
+
+    # Create a custom style for the candlestick chart.
+    custom_style = mpf.make_mpf_style(base_mpl_style="seaborn-darkgrid",
+                                      gridcolor="white",
+                                      facecolor="black")
+
+    # Plot the candlestick chart.
+    mpf.plot(plot_data, type='candle', style=custom_style, 
+             title=(title + f' (Window Size = {window_size})'), 
+             ylabel='Price', ylabel_lower='Date', show_nontrading=True)
+
+
+# Plot the candlestick chart for the test data.
+plot_candlestick_chart(test_data, window_size=CANDLE_VIS_WINDOW, title=f'{COMPANY} Stock Price Chart')
+
+
+def plot_boxplot_chart(data, window_size=2, title="Boxplot Chart", label_skips=7):
+    """
+    Plot a boxplot chart for stock market financial data with a moving window.
+
+    Args:
+        data (pd.Series): The financial data (e.g., predicted prices) for a series of consecutive trading days.
+        window_size (int): The size of the moving window for creating boxplots.
+        title (str): The title of the chart.
+        label_skips (int): The number of labels to skip between each displayed label.
+
+    Returns:
+        None (displays the chart).
+    """
+    print(data)
+    # Calculate the number of boxplots to create.
+    num_boxplots = len(data) - window_size + 1
+    print(len([f'Day {i+1}-{i+window_size}' for i in range(num_boxplots)]))
+
+    # Create a list to store data for each boxplot.
+    plot_data = [data.reshape(-1)[i:i+window_size] for i in range(num_boxplots)]
+
+    # Plot the boxplot chart.
+    plt.figure(figsize=(12, 6))
+    # Setting up the boxplot chart, including the labels for each boxplot.
+    plt.boxplot(plot_data, 
+                labels=[f'Day {i+1}-{i+window_size}' for i in range(num_boxplots)], 
+                autorange=True,
+                meanline=True,
+                showmeans=True)
+    # Title and labels for the chart.
+    plt.title(title + f' (Window Size = {window_size})')
+    plt.xlabel('Days')
+    plt.ylabel('Prices')
+    plt.xticks(rotation=65)
+    plt.grid(True) # Adding a grid to the chart for better readability
+
+    # Normally the x-axis labels are too close together to read with this many boxplots,
+    # so here we can just disable every nth label to mitigate the overlap.
+    for nth, label in enumerate(plt.gca().xaxis.get_ticklabels()):
+        if nth % label_skips != 0:
+            label.set_visible(False)
+    plt.show()
+
+
+# Plot the boxplot chart for the predicted prices.
+plot_boxplot_chart(prediction, window_size=BOX_VIS_WINDOW, title=f'{COMPANY} Stock Price Boxplot Chart')
