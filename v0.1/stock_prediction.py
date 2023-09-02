@@ -26,8 +26,7 @@ import pandas_datareader as web
 import datetime as dt
 import tensorflow as tf
 import yfinance as yf
-import mplfinance as mpf
-import matplotlib.dates as mdates
+import mplfinance as mpf # Added - Weekly Report 3
 
 import os # Added - Weekly Report 2
 from sklearn.model_selection import train_test_split # Added - Weekly Report 2
@@ -408,11 +407,9 @@ model.fit(loaded_data['x_train'], loaded_data['y_train'], epochs=EPOCHS, batch_s
 # Test the model accuracy on existing data
 #------------------------------------------------------------------------------
 # Load the test data
-
 test_data = loaded_data['test_df']#.drop(columns=['Date'])
 
 actual_prices = loaded_data['test_df'][PRICE_VALUE].values
-
 
 # We need to do the following because to predict the closing price of the fisrt
 # PREDICTION_DAYS of the test period [TEST_START, TEST_END], we'll need the 
@@ -478,7 +475,7 @@ print(f"Prediction: {prediction}")
 #------------------------------------------------------------------------------
 
 CANDLE_VIS_WINDOW = 10
-BOX_VIS_WINDOW = 60
+BOX_VIS_WINDOW = 90
 
 def plot_candlestick_chart(data, window_size=1, title="Candlestick Chart"):
     """
@@ -503,12 +500,13 @@ def plot_candlestick_chart(data, window_size=1, title="Candlestick Chart"):
 
     # Create a custom style for the candlestick chart.
     custom_style = mpf.make_mpf_style(base_mpl_style="seaborn-darkgrid",
-                                      gridcolor="white",
-                                      facecolor="black")
+                                    gridcolor="white",
+                                    facecolor="beige",
+                                    edgecolor="black",)
 
     # Plot the candlestick chart.
-    mpf.plot(plot_data, type='candle', style=custom_style, 
-             title=(title + f' (Window Size = {window_size})'), 
+    mpf.plot(plot_data, type='candle', style=custom_style,
+             title=(title + f' (Window Size = {window_size})'),
              ylabel='Price', ylabel_lower='Date', show_nontrading=True)
 
 
@@ -516,7 +514,7 @@ def plot_candlestick_chart(data, window_size=1, title="Candlestick Chart"):
 plot_candlestick_chart(test_data, window_size=CANDLE_VIS_WINDOW, title=f'{COMPANY} Stock Price Chart')
 
 
-def plot_boxplot_chart(data, window_size=2, title="Boxplot Chart", label_skips=7):
+def plot_boxplot_chart(data, window_size=2, title="Boxplot Chart", label_skips=14):
     """
     Plot a boxplot chart for stock market financial data with a moving window.
 
@@ -538,19 +536,18 @@ def plot_boxplot_chart(data, window_size=2, title="Boxplot Chart", label_skips=7
     plot_data = [data.reshape(-1)[i:i+window_size] for i in range(num_boxplots)]
 
     # Plot the boxplot chart.
-    plt.figure(figsize=(12, 6))
+    plt.figure(figsize=(14, 6))
     # Setting up the boxplot chart, including the labels for each boxplot.
-    plt.boxplot(plot_data, 
-                labels=[f'Day {i+1}-{i+window_size}' for i in range(num_boxplots)], 
-                autorange=True,
-                meanline=True,
-                showmeans=True)
-    # Title and labels for the chart.
     plt.title(title + f' (Window Size = {window_size})')
     plt.xlabel('Days')
     plt.ylabel('Prices')
     plt.xticks(rotation=65)
     plt.grid(True) # Adding a grid to the chart for better readability
+    plt.boxplot(plot_data, 
+                labels=[f'Day {i+1}-{i+window_size}' for i in range(num_boxplots)], 
+                autorange=True,
+                meanline=True,
+                showmeans=True,)
 
     # Normally the x-axis labels are too close together to read with this many boxplots,
     # so here we can just disable every nth label to mitigate the overlap.
@@ -561,4 +558,7 @@ def plot_boxplot_chart(data, window_size=2, title="Boxplot Chart", label_skips=7
 
 
 # Plot the boxplot chart for the predicted prices.
-plot_boxplot_chart(prediction, window_size=BOX_VIS_WINDOW, title=f'{COMPANY} Stock Price Boxplot Chart')
+plot_boxplot_chart(prediction,
+                   window_size=BOX_VIS_WINDOW,
+                   title=f'{COMPANY} Stock Price Boxplot Chart',
+                   label_skips=28)
