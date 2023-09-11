@@ -17,8 +17,6 @@
 # pip install yfinance
 from cgi import test
 from collections import deque
-from multiprocessing.pool import RUN
-
 
 import numpy as np
 import matplotlib.pyplot as plt
