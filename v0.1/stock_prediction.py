@@ -16,23 +16,23 @@
 # pip install pandas-datareader
 # pip install yfinance
 from cgi import test
-from collections import deque # Added - Weekly Report 2
+from collections import deque
 
 import numpy as np
 import matplotlib.pyplot as plt
 
 import pandas as pd
-import pandas_datareader as web
+
 import datetime as dt
 import tensorflow as tf
 import yfinance as yf
-import mplfinance as mpf # Added - Weekly Report 3
+import mplfinance as mpf
 
-import os # Added - Weekly Report 2
-from sklearn.model_selection import train_test_split # Added - Weekly Report 2
+import os
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout, LSTM, InputLayer
+from tensorflow.keras.layers import Dense, Dropout, LSTM, InputLayer, GRU
 
 DATA_SOURCE = "yahoo"
 COMPANY = "TSLA"
@@ -44,8 +44,7 @@ TRAIN_END = '2020-01-01'
 TEST_START = '2020-01-02'
 TEST_END = '2022-12-31'
 
-PREDICTION_DAYS_PAST = 60 # Modified variable name for clarity
-### Newly Added - Weekly Report 2
+PREDICTION_DAYS_PAST = 60 # number of days to look back to base the prediction | Default: 60
 PREDICT_DAYS_AHEAD = 1
 TEST_SIZE = 0.2
 SHUFFLE_DATASET = True
@@ -56,9 +55,59 @@ LOCAL_SAVE = True
 LOCAL_LOAD = True
 LOCAL_PATH = './data'
 SCALE_FEATURES = True
-EPOCHS = 25
-BATCH_SIZE = 32
-LOSS = "mean_absolute_error"
+
+# Model parameters
+CELL = LSTM # the type of cell to use for the DL network | LSTM, GRU | Default: LSTM
+EPOCHS = 25 # number of epochs (repetitions of training) to train for | Default: 25
+BATCH_SIZE = 32 # number of samples per update | Default: 32
+LOSS = "mean_absolute_error" # loss function used to calculate prediction error | 'mean_absolute_error', 'huber_loss', 'mean_squared_error' | Default: "mean_absolute_error"
+OPTIMIZER = 'adam' # which optimizer function to use | 'adam', 'rmsprop', 'sgd' | Default: "adam"
+NUM_LAYERS = 2 # Default: 2
+DROPOUT = 0.2 # dropout defines the fraction of deactivated neurons, eg; 0.2 == 20%.
+UNITS = 50 # the number of units/nodes in each layer | Default: 50
+
+# Get variable values for the plot and filename
+RUN_NAME = "mean_absolute_error"
+EPOCHS_NAME = str(EPOCHS)
+CELL_NAME = str(CELL).rsplit(sep='.', maxsplit=1)[-1].rsplit(sep="'", maxsplit=1)[0]
+BATCH_NAME = str(BATCH_SIZE)
+LAYERS_NAME = str(NUM_LAYERS)
+UNITS_NAME = str(UNITS)
+DROP_NAME = str(DROPOUT)
+OPTIM_NAME = str(OPTIMIZER)
+LOSS_NAME = str(LOSS)
+
+# Save parameter settings
+settings = {
+'epochs' : EPOCHS_NAME,
+'batch_size' : BATCH_NAME,
+'layers' : LAYERS_NAME,
+'units' : UNITS_NAME,
+'dropout' : DROP_NAME,
+'cell' : CELL_NAME,
+'optimizer' : OPTIM_NAME,
+'loss_function' : LOSS_NAME,
+'DATA_SOURCE' : DATA_SOURCE,
+'COMPANY' : COMPANY,
+'TRAIN_START' : TRAIN_START,
+'TRAIN_END' : TRAIN_END,
+'TEST_START' : TEST_START,
+'TEST_END' : TEST_END,
+'PREDICTION_DAYS_PAST' : PREDICTION_DAYS_PAST,
+'PREDICT_DAYS_AHEAD' : PREDICT_DAYS_AHEAD,
+'TEST_SIZE' : TEST_SIZE,
+'SHUFFLE_DATASET' : SHUFFLE_DATASET,
+'SPLIT_BY_DATE' : SPLIT_BY_DATE,
+'FEATURE_COLUMNS' : str(FEATURE_COLUMNS),
+'PRICE_VALUE' : PRICE_VALUE,
+'LOCAL_SAVE' : LOCAL_SAVE,
+'LOCAL_LOAD' : LOCAL_LOAD,
+'LOCAL_PATH' : LOCAL_PATH,
+'SCALE_FEATURES' : SCALE_FEATURES
+}
+
+#------------------------------------------------------------------------------
+# Helper Functions
 
 # Pinched from P1
 def shuffle_in_unison(a, b):
@@ -310,31 +359,33 @@ loaded_data = load_data_and_process(company=COMPANY,
 ## TO DO:
 # Change the model to increase accuracy?
 #------------------------------------------------------------------------------
-def create_model(sequence_length, n_features, units=50, cell=LSTM, n_layers=2, dropout=0.2,
-                loss="mean_absolute_error", optimizer="adam"):
+
+# Create the function to build the model
+def create_model(n_feats, seq_len=60, units=50, cell=LSTM, n_lays=2, dropout=0.2,
+                loss="mean_absolute_error", optim="adam"):
     """
     Params:
-        sequence_length (int): the number of days to look back to base the prediction
-        n_features (int): the number of features to use to feed into the model
-        units (int): the number of units in each layer
-        cell (LSTM/GRU): the type of cell to use
-        n_layers (int): the number of layers
-        dropout (float): the dropout rate
-        loss (str): the loss function
-        optimizer (str): the optimizer function
+        n_feats (int): the number of features to use to feed into the model. | len(FEATURE_COLUMNS)
+        seq_len (int): number of days to look back to base the prediction | Default: 60
+        units (int): the number of units/nodes in each layer | Default: 50
+        cell (LSTM/GRU): the type of cell to use | 'LSTM', 'GRU', 'LSTM', 'RNN', 'CNN' | Default: LSTM
+        n_lays (int): the number of layers | Default: 2
+        dropout (float): the dropout rate defines the fraction of deactivated neurons, eg; 0.2 == 20%.
+        loss (str): the loss function | 'mean_absolute_error', 'huber_loss', 'cosine_similarity' | Default: "mean_absolute_error"
+        optim (str): the optimizer function | 'adam', 'rmsprop', 'sgd', 'adadelta' | Default: "adam"
 
     Returns:
         model (tf.keras.src.engine.sequential.Sequential): the model
     """
-    model = Sequential()# Basic neural network
+    created_model = Sequential()# Basic neural network
     # See: https://www.tensorflow.org/api_docs/python/tf/keras/Sequential
     # for some useful examples
-    for i in range(n_layers):
-        if i == 0:
+    for layer in range(n_lays):
+        if layer == 0:
             # first layer
-            model.add(cell(units, return_sequences=True, batch_input_shape=(None, sequence_length, n_features)))
-            # This is our first hidden layer which also spcifies an input layer. 
-            # That's why we specify the input shape for this layer; 
+            created_model.add(cell(units, return_sequences=True, batch_input_shape=(None, seq_len, n_feats)))
+            # This is our first hidden layer which also spcifies an input layer.
+            # That's why we specify the input shape for this layer;
             # i.e. the format of each training example
             # The above would be equivalent to the following two lines of code:
             # model.add(InputLayer(input_shape=(x_train.shape[1], 1)))
@@ -342,141 +393,228 @@ def create_model(sequence_length, n_features, units=50, cell=LSTM, n_layers=2, d
             # For advanced explanation of return_sequences:
             # https://machinelearningmastery.com/return-sequences-and-return-states-for-lstms-in-keras/
             # https://www.dlology.com/blog/how-to-use-return_state-or-return_sequences-in-keras/
-            # As explained there, for a stacked LSTM, you must set return_sequences=True 
-            # when stacking LSTM layers so that the next LSTM layer has a 
-            # three-dimensional sequence input. 
+            # As explained there, for a stacked LSTM, you must set return_sequences=True
+            # when stacking LSTM layers so that the next LSTM layer has a
+            # three-dimensional sequence input.
 
             # Finally, units specifies the number of nodes in this layer.
             # This is one of the parameters you want to play with to see what number
             # of units will give you better prediction quality (for your problem)
-        elif i == n_layers - 1:
+        elif layer == n_lays - 1:
             # last layer
-            model.add(cell(units=units, return_sequences=False))
+            created_model.add(cell(units=units, return_sequences=False))
         else:
             # hidden layers
-            model.add(cell(units=units, return_sequences=True))
+            created_model.add(cell(units=units, return_sequences=True))
             # More on Stacked LSTM:
             # https://machinelearningmastery.com/stacked-long-short-term-memory-networks/
         # add dropout after each layer
-        model.add(Dropout(dropout))
-        # The Dropout layer randomly sets input units to 0 with a frequency of 
-        # rate (= 0.2 above) at each step during training time, which helps 
-        # prevent overfitting (one of the major problems of ML). 
-    model.add(Dense(units=1, activation="linear"))
+        created_model.add(Dropout(dropout))
+        # The Dropout layer randomly sets input units to 0 with a frequency of
+        # rate (= 0.2 above) at each step during training time, which helps
+        # prevent overfitting (one of the major problems of ML).
+    created_model.add(Dense(units=1, activation="linear"))
     # Prediction of the next closing value of the stock price
 
     # We compile the model by specify the parameters for the model
     # See lecture Week 6 (COS30018)
-    model.compile(loss=loss, metrics=["mean_absolute_error"], optimizer=optimizer)
-    # The optimizer and loss are two important parameters when building an 
-    # ANN model. Choosing a different optimizer/loss can affect the prediction
-    # quality significantly. You should try other settings to learn; e.g.
-        
-    # optimizer='rmsprop'/'sgd'/'adadelta'/...
-    # loss='mean_absolute_error'/'huber_loss'/'cosine_similarity'/...
-    return model
+    created_model.compile(loss=loss,
+                          metrics=[loss],
+                          optimizer=optim)
+    # The loss function is a measure of how good a prediction model does in terms
+    # of being able to predict the expected outcome.
+    return created_model
 
-model = create_model(sequence_length=PREDICTION_DAYS_PAST, n_features=len(FEATURE_COLUMNS),
-                     loss=LOSS, units=50, cell=LSTM, n_layers=2)
+# Creating our own callback to be able to save and store the loss history
+class LossCallback(tf.keras.callbacks.Callback):
+    def __init__(self):
+        super().__init__()
+        self.loss_history = {'loss': {}}
 
-# Now we are going to train this model with our training data 
-# (x_train, y_train)
-model.fit(loaded_data['x_train'], loaded_data['y_train'], epochs=EPOCHS, batch_size=BATCH_SIZE)
-# Other parameters to consider: How many rounds(epochs) are we going to 
-# train our model? Typically, the more the better, but be careful about
-# overfitting!
-# What about batch_size? Well, again, please refer to 
-# Lecture Week 6 (COS30018): If you update your model for each and every 
-# input sample, then there are potentially 2 issues: 1. If you training 
-# data is very big (billions of input samples) then it will take VERY long;
-# 2. Each and every input can immediately makes changes to your model
-# (a souce of overfitting). Thus, we do this in batches: We'll look at
-# the aggreated errors/losses from a batch of, say, 32 input samples
-# and update our model based on this aggregated loss.
+    def on_epoch_end(self, epoch, logs=None):
+        # We append the loss metric to the history dict
+        self.loss_history["loss"][epoch] = logs["loss"]
 
-# TO DO:
-# Save the model and reload it
-# Sometimes, it takes a lot of effort to train your model (again, look at
-# a training data with billions of input samples). Thus, after spending so 
-# much computing power to train your model, you may want to save it so that
-# in the future, when you want to make the prediction, you only need to load
-# your pre-trained model and run it on the new input for which the prediction
-# need to be made.
+# ------------------------ Training the model ------------------------
+RUN_MODEL = True
 
-#------------------------------------------------------------------------------
-# Test the model accuracy on existing data
-#------------------------------------------------------------------------------
-# Load the test data
-test_data = loaded_data['test_df']#.drop(columns=['Date'])
+if RUN_MODEL:
+    history_callback = LossCallback()
 
-actual_prices = loaded_data['test_df'][PRICE_VALUE].values
+    # Call the function to create our model
+    model = create_model(
+        n_feats = len(FEATURE_COLUMNS), # number of features to use to feed into the model
+        seq_len = PREDICTION_DAYS_PAST, # number of days to look back to base the prediction
+        units   = UNITS, # number of units in each layer
+        cell    = CELL, # the type of cell to use
+        n_lays  = NUM_LAYERS, # the number of layers
+        # Dropout is a regularization technique to help prevent overfitting by randomly deactivating
+        # neurons during training to encourage the network to learn more robust and generalizable
+        # features, since the network is penalized for over-relying on any particular neuron.
+        # Dropout variable is the fraction of the neurons that are deactivated, so 0.2 == 20%.
+        dropout = DROPOUT, # the dropout rate
+        loss    = LOSS, # the loss function
+        optim   = OPTIMIZER) # the optimizer function
 
-# We need to do the following because to predict the closing price of the fisrt
-# PREDICTION_DAYS of the test period [TEST_START, TEST_END], we'll need the 
-# data from the training period
-total_dataset = pd.concat((loaded_data['df'][FEATURE_COLUMNS], test_data[FEATURE_COLUMNS]), axis=0)
+    # Get run start time:
+    time_started = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
 
-model_inputs = total_dataset[len(total_dataset) - len(test_data) - PREDICTION_DAYS_PAST:].values
+    model.fit(loaded_data['x_train'], loaded_data['y_train'], epochs=EPOCHS, batch_size=BATCH_SIZE, callbacks=[history_callback])
 
-# Normalize the data within each column using the column scaler value
-for i, feat in enumerate(FEATURE_COLUMNS):
-    print(i, feat)
-    print(model_inputs.shape)
-    model_inputs[:, i] = loaded_data["column_scaler"][feat].transform(model_inputs[:, i].reshape(-1, 1)).reshape(-1)
+    # Get run end time:
+    time_ended = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_name = f'{COMPANY}_-_{time_ended}'
+
+    # Access loss_history dict after training (and print values)
+    loss_history = history_callback.loss_history
+    print(loss_history['loss'])
+
+    ### Plot the loss history
+    # Extract the loss values and epoch numbers (except first epoch)
+    epochs = list(loss_history["loss"].keys())[1:]
+    loss_values = list(loss_history["loss"].values())[1:]
+
+    # Make directory if it doesn't exist
+    if not os.path.exists(os.path.join(f'./logs/{RUN_NAME}/')):
+        os.makedirs(os.path.join(f'./logs/{RUN_NAME}/'))
+    if not os.path.exists(os.path.join(f'./logs/{RUN_NAME}/')):
+        os.makedirs(os.path.join(f'./logs/{RUN_NAME}/'))
+    if not os.path.exists(os.path.join(f'./logs/{RUN_NAME}/', run_name)):
+        os.makedirs(os.path.join(f'./logs/{RUN_NAME}/', run_name))
+
+    ## Display loss plot
+    # Create a plot
+    plt.figure(figsize=(12, 6))
+    fig = plt.get_current_fig_manager()
+    fig.set_window_title(f'Model: {COMPANY} Stock Price Prediction | ./{run_name}/loss_plot.jpg')
+    plt.plot(epochs, loss_values, marker='o', linestyle='-')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.grid(True)
+
+    plt.title(f'Model: {COMPANY} Stock Price Prediction | \
+    Total Epochs : {EPOCHS_NAME}\n\
+    Batch Size: {BATCH_NAME} | \
+    Layer Count: {LAYERS_NAME} |\
+    Units (per Layer): {UNITS_NAME} |\
+    Dropout: {DROP_NAME}\n\
+    Cell: {CELL_NAME} |\
+    Optimizer: {OPTIM_NAME} |\
+    Loss Function: {LOSS_NAME}')
+    plt.ylabel('Training Loss')
+    plt.xlabel('Epoch')
+    plt.legend(['Loss'])
+
+    # Save before display since display will clear the plot
+    plt.savefig(f'./logs/{RUN_NAME}/{run_name}/loss_plot.jpg', dpi=300, bbox_inches='tight')
+    plt.show()
+
+
+    ## Save loss history
+    loss_df = pd.DataFrame(loss_history)
+    # Save the dataframe to CSV
+    loss_df.to_csv(f'./logs/{RUN_NAME}/{run_name}/loss.csv')
+
+    ## Save model
+    model.save(f'./logs/{RUN_NAME}/{run_name}/model.h5')
+
+    # Save settings to CSV
+    settings['run_name'] = run_name
+    settings['time_started'] = time_started
+    settings['time_ended'] = time_ended
+
+    if not os.path.exists(f'./logs/{RUN_NAME}/training_runs.csv'):
+        settings_df = pd.DataFrame(settings, index=[time_ended])
+        settings_df.to_csv(f'./logs/{RUN_NAME}/training_runs.csv', index_label='timestamp')
+    else:
+        settings_df = pd.DataFrame(settings, index=[time_ended])
+        settings_df.to_csv(f'./logs/{RUN_NAME}/training_runs.csv', index_label='timestamp', mode='a', header=False)
+
+
+
     #------------------------------------------------------------------------------
-    # Make predictions on test data
+    # Test the model accuracy on existing data
     #------------------------------------------------------------------------------
-x_test = []
-for x in range(PREDICTION_DAYS_PAST, len(model_inputs)):
-    x_test.append(model_inputs[x-PREDICTION_DAYS_PAST:x])
+    # Load the test data
+    test_data = loaded_data['test_df']#.drop(columns=['Date'])
+
+    actual_close_prices = loaded_data['test_df'][PRICE_VALUE].values
+
+    # We need to do the following because to predict the closing price of the fisrt
+    # PREDICTION_DAYS of the test period [TEST_START, TEST_END], we'll need the 
+    # data from the training period
+    total_dataset = pd.concat((loaded_data['df'][FEATURE_COLUMNS], test_data[FEATURE_COLUMNS]), axis=0)
+
+    model_inputs = total_dataset[len(total_dataset) - len(test_data) - PREDICTION_DAYS_PAST:].values
+
+    # Normalize the data within each column using the column scaler value
+    for i, feat in enumerate(FEATURE_COLUMNS):
+        print(i, feat)
+        print(model_inputs.shape)
+        model_inputs[:, i] = loaded_data["column_scaler"][feat].transform(model_inputs[:, i].reshape(-1, 1)).reshape(-1)
+        #------------------------------------------------------------------------------
+        # Make predictions on test data
+        #------------------------------------------------------------------------------
+    x_test = []
+    for x in range(PREDICTION_DAYS_PAST, len(model_inputs)):
+        x_test.append(model_inputs[x-PREDICTION_DAYS_PAST:x])
 
 
-x_test = np.array(x_test)
-x_train = np.reshape(x_test, (-1, x_test.shape[1], len(FEATURE_COLUMNS)))
-# Reshaping the data into the format that the model expects:
-# (number of samples, number of time steps, number of features per sample)
+    x_test = np.array(x_test)
+    x_train = np.reshape(x_test, (-1, x_test.shape[1], len(FEATURE_COLUMNS)))
+    # Reshaping the data into the format that the model expects:
+    # (number of samples, number of time steps, number of features per sample)
 
-predicted_prices = model.predict(x_test).reshape(-1)
-# Clearly, as we transform our data into the normalized range (0,1),
-# we now need to reverse this transformation 
+    predicted_prices = model.predict(x_test).reshape(-1)
+    # Clearly, as we transform our data into the normalized range (0,1),
+    # we now need to reverse this transformation 
 
-#------------------------------------------------------------------------------
-# Predict next day
-#------------------------------------------------------------------------------
+    #------------------------------------------------------------------------------
+    # Predict next day
+    #------------------------------------------------------------------------------
 
-real_data = []
-for x in range(PREDICTION_DAYS_PAST, len(model_inputs)):
-    real_data.append(model_inputs[x-PREDICTION_DAYS_PAST:x])
+    real_data = []
+    for x in range(PREDICTION_DAYS_PAST, len(model_inputs)):
+        real_data.append(model_inputs[x-PREDICTION_DAYS_PAST:x])
 
-real_data = np.array(real_data)
-real_data = np.reshape(real_data, (-1, real_data.shape[1], len(FEATURE_COLUMNS)))
+    real_data = np.array(real_data)
+    real_data = np.reshape(real_data, (-1, real_data.shape[1], len(FEATURE_COLUMNS)))
 
-prediction = model.predict(real_data)
-prediction = loaded_data["column_scaler"][PRICE_VALUE].inverse_transform(prediction)
-print(f"Prediction: {prediction}")
+    prediction = model.predict(real_data)
+    predicted_prices = {}
+    #actual_prices = {}
+    # loaded_data["column_scaler"][price_val].inverse_transform(prediction).reshape(-1)
+    for feat in FEATURE_COLUMNS:
+        predicted_prices[feat] = loaded_data["column_scaler"][feat].inverse_transform(prediction).reshape(-1)
+        #actual_prices = loaded_data['df'][feat].values
 
-# A few concluding remarks here:
-# 1. The predictor is quite bad, especially if you look at the next day 
-# prediction, it missed the actual price by about 10%-13%
-# Can you find the reason?
-# 2. The code base at
-# https://github.com/x4nth055/pythoncode-tutorials/tree/master/machine-learning/stock-prediction
-# gives a much better prediction. Even though on the surface, it didn't seem 
-# to be a big difference (both use Stacked LSTM)
-# Again, can you explain it?
-# A more advanced and quite different technique use CNN to analyse the images
-# of the stock price changes to detect some patterns with the trend of
-# the stock price:
-# https://github.com/jason887/Using-Deep-Learning-Neural-Networks-and-Candlestick-Chart-Representation-to-Predict-Stock-Market
-# Can you combine these different techniques for a better prediction??
+    # include deviation from actual price in prediction dict
+    predicted_prices['close_price_deviation'] = predicted_prices[PRICE_VALUE] - actual_close_prices
+
+    print(f"Prediction: {predicted_prices[PRICE_VALUE]}")
+
+    ## Save predictions to CSV
+    pred_df = pd.DataFrame(predicted_prices)
+    pred_df.to_csv(f'./logs/{RUN_NAME}/{run_name}/predictions.csv')
+
+    # A few concluding remarks here:
+    # 1. The predictor is quite bad, especially if you look at the next day 
+    # prediction, it missed the actual price by about 10%-13%
+    # Can you find the reason?
+    # 2. The code base at
+    # https://github.com/x4nth055/pythoncode-tutorials/tree/master/machine-learning/stock-prediction
+    # gives a much better prediction. Even though on the surface, it didn't seem 
+    # to be a big difference (both use Stacked LSTM)
+    # Again, can you explain it?
+    # A more advanced and quite different technique use CNN to analyse the images
+    # of the stock price changes to detect some patterns with the trend of
+    # the stock price:
+    # https://github.com/jason887/Using-Deep-Learning-Neural-Networks-and-Candlestick-Chart-Representation-to-Predict-Stock-Market
+    # Can you combine these different techniques for a better prediction??
 
 #------------------------------------------------------------------------------
 # Plot the test predictions
 #------------------------------------------------------------------------------
-
-CANDLE_VIS_WINDOW = 10
-BOX_VIS_WINDOW = 90
-
 def plot_candlestick_chart(data, window_size=1, title="Candlestick Chart"):
     """
     Plot a candlestick chart for stock market financial data.
@@ -508,11 +646,6 @@ def plot_candlestick_chart(data, window_size=1, title="Candlestick Chart"):
     mpf.plot(plot_data, type='candle', style=custom_style,
              title=(title + f' (Window Size = {window_size})'),
              ylabel='Price', ylabel_lower='Date', show_nontrading=True)
-
-
-# Plot the candlestick chart for the test data.
-plot_candlestick_chart(test_data, window_size=CANDLE_VIS_WINDOW, title=f'{COMPANY} Stock Price Chart')
-
 
 def plot_boxplot_chart(data, window_size=2, title="Boxplot Chart", label_skips=14):
     """
@@ -556,9 +689,70 @@ def plot_boxplot_chart(data, window_size=2, title="Boxplot Chart", label_skips=1
             label.set_visible(False)
     plt.show()
 
+#------------------------------------------------------------------------------
+CANDLE_VIS_WINDOW = 10
+BOX_VIS_WINDOW = 90
 
-# Plot the boxplot chart for the predicted prices.
-plot_boxplot_chart(prediction,
-                   window_size=BOX_VIS_WINDOW,
-                   title=f'{COMPANY} Stock Price Boxplot Chart',
-                   label_skips=28)
+PLOT_INDIVIDUAL_RUN = False
+COMPARE_RUNS = True
+
+if PLOT_INDIVIDUAL_RUN:
+    # Plot the candlestick chart for the test data.
+    plot_candlestick_chart(test_data, window_size=CANDLE_VIS_WINDOW, title=f'{COMPANY} Stock Price Chart')
+    # Plot the boxplot chart for the predicted prices.
+    plot_boxplot_chart(prediction, window_size=BOX_VIS_WINDOW, title=f'{COMPANY} Stock Price Boxplot Chart', label_skips=28)
+    
+if COMPARE_RUNS:
+    # Compare the loss history of different runs with a subplot for each run
+    runs = pd.read_csv(f'./logs/{RUN_NAME}/training_runs.csv', index_col=0)
+
+    plt.figure(figsize=(12, 6))
+    fig = plt.get_current_fig_manager()
+    style_cur = col_cur = 0
+    style_list = ['-', '--', '-.', ':']
+    col_list = ['r', 'g', 'b', 'k']
+    # Get list of parameter values that are fixed/identical among all training runs
+    params = ['epochs', 'batch_size', 'layers', 'units', 'dropout', 'cell',
+              'optimizer', 'loss_function', 'PREDICTION_DAYS_PAST', 'PREDICT_DAYS_AHEAD',
+              'TEST_SIZE', 'SHUFFLE_DATASET', 'SPLIT_BY_DATE', 'FEATURE_COLUMNS', 'SCALE_FEATURES']
+
+    identical = (runs[params].nunique() == 1)
+    diff = identical[identical is False].index.tolist()
+    identical = identical[identical is True].index.tolist()
+    
+    for i, row in runs.iterrows():
+        loss_history_path = f'./logs/{RUN_NAME}/{row["run_name"]}/loss.csv'
+        loss_history_df = pd.read_csv(loss_history_path, index_col=0)
+        # Can ignore the first epoch since it's usually a lot higher than the rest
+        loss_history_df = loss_history_df.iloc[1:]
+
+        # change color for each run, only change style when color has been used
+        run_differences = row[diff].to_dict()
+        
+        plt.plot(loss_history_df['loss'], label=f'{row["run_name"]} | {run_differences}', linestyle=style_list[style_cur%4], color=col_list[col_cur%4])
+        col_cur += 1
+        if col_cur%4 == 0:
+            style_cur += 1
+
+    label_list = runs[identical].to_dict(orient="records")[0]
+
+    # Initialize an empty string to store the result
+    label = ""
+    # Format label string
+    for i, (key, value) in enumerate(label_list.items()):
+        label += f"{key}: {value}"
+        # Add a newline character every 6 pairs (except for last)
+        if (i + 1) % 6 == 0 and (i + 1) != len(label_list):
+            label += '\n'
+        else: label += ' | '
+
+    # Print or use the resulting string as needed
+    print(label)
+
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.grid(True)
+    plt.title(f'Run Loss History Comparison | {DATA_SOURCE}, {COMPANY}. [{TRAIN_START} - {TRAIN_END}]\nSettings: [{label}]')
+    plt.legend()
+    plt.savefig(f'./logs/{RUN_NAME}/run_comparison.jpg', dpi=300, bbox_inches='tight')
+    plt.show()
