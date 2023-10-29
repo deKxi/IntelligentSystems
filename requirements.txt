@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 numpy
 matplotlib
 pandas
@@ -6,3 +7,18 @@ tensorflow
 scikit-learn
 yfinance
 yahoo_fin
+mplfinance
+statsmodels
+
+=======
+numpy
+matplotlib
+pandas
+pandas-datareader
+tensorflow
+scikit-learn
+yfinance
+yahoo_fin
+mplfinance
+statsmodels
+>>>>>>> 7062529efb898091be5c2324a2b3e329d6616c10
