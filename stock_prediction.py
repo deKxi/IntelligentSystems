@@ -11,6 +11,7 @@
 #   For class: COS30018 - Intelligent Systems
 
 from collections import deque
+from math import log
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -53,36 +54,37 @@ def save_settings(settings, name_or_path):
 # ------------------------------------------------------------------------------
 # Settings and Parameters
 # ------------------------------------------------------------------------------
-TEST_NAME = "Final_Test"
-RUN_MODEL = True
-
-PLOT_LOSS = True
-SAVE_LOSS_PLOT = True
-DISPLAY_PLOTS = False
-
-COMPARE_GLOBAL_PARAMS_LIST = ['PRICE_VALUE', 'SCALE_FEATURES', 'RESAMPLE_DATASET', 'RESAMPLE_FREQ', 'PAD_MISSING_DAYS', 'TEST_SIZE']
-
-COMPARISON_PARAMS_DICT = {
-    "LSTM": ['CELL_NAME','EPOCHS','BATCH_SIZE','DROPOUT','LOSS','OPTIMIZER', 'NUM_LAYERS','UNITS', 'PREDICT_INCR_PAST','PREDICT_INCR_AHEAD', 'FEATURE_COLUMNS'],
+# Comparison Params, don't modify
+COMP_GLBL_PARAMS = ['PRICE_VALUE','SCALE_FEATURES','RESAMPLE_DATASET','RESAMPLE_FREQ','PAD_MISSING_DAYS','TEST_SIZE']
+COMP_PARAMS_DICT = {
+    "LSTM": ['CELL_NAME','EPOCHS','BATCH_SIZE','DROPOUT','LOSS','OPTIMIZER',
+            'NUM_LAYERS','UNITS', 'PREDICT_INCR_PAST','PREDICT_INCR_AHEAD', 'FEATURE_COLUMNS'],
     "ARIMA" : ['FORECAST_METHOD', 'ARIMA_OOS_FORECASTS', 'arima_order', ],
     "SARIMA" : ['FORECAST_METHOD', 'ARIMA_OOS_FORECASTS', 'sarima_order','sarima_seasonal_order', 'SEASONAL_PERIOD']}
-
-COMPARE_LOSS = True
-COMPARE_PREDICTIONS = True
-COMPARISON_PREDICTION_MODELS = ["LSTM", "ARIMA", "SARIMA", "ENSEMBLE"]
-COMPARISON_PREDICTION_COLUMN = {
+COMP_PREDICT_MODELS = ["LSTM", "ARIMA", "SARIMA", "ENSEMBLE"]
+COMP_PREDICT_COLUMN = {
     "Close" : "Price Value ($)", 
     "price_error" : "Price Error ($)", 
     "price_error_percent" : "Price Error (%)"}
 
-PLOT_ENSEMBLE = True
-PLOT_INDIVIDUAL_RUN = True
-COMPARE_RUNS = True
-CANDLE_VIS_WINDOW = 10
-BOX_VIS_WINDOW = 90
+### Modify Below:
+TEST_NAME = "Final_Test"
+RUN_MODEL = True # Run the model
+
+PLOT_LOSS = True # Plot the loss history for each run
+SAVE_LOSS_PLOT = True # Save the loss history plot for each run
+DISPLAY_PLOTS = False # Display the plots when they are created (currently still displays plots anyway, but less of them)
+COMPARE_RUNS = True # Compare the predictions of different runs
+
+COMPARE_LOSS = True # Compare the loss history of different runs
+COMPARE_PREDICTIONS = True # Compare the predictions of different runs
+
+PLOT_ENSEMBLE = True # Plot the ensemble predictions
+PLOT_INDIVIDUAL_RUN = True # Plot the individual run predictions
+CANDLE_VIS_WINDOW = 10 # The number of days to represent as a single candlestick
+BOX_VIS_WINDOW = 90 # The number of days to represent as a single boxplot
 
 CELL = LSTM  # the type of cell to use for the DL network | LSTM, or GRU (untested)             | Default: LSTM
-
 SETTINGS = {
     # Get variable values for the plot and filename,
     'TEST_NAME' : TEST_NAME,
@@ -93,12 +95,10 @@ SETTINGS = {
     'PREDICT_INCR_PAST' : 52, # number of past increments to base the prediction from   | Default: 60
     'PREDICT_INCR_AHEAD' : 1, # number of increments ahead to base our prediction       | Default: 1
 
-    # 'real', 'speculative' | Only takes effect when ARIMA_OOS_FORECASTS is set to -1 (auto)
-    'FORECAST_METHOD' : 'speculative', # Forecasting ARIMA/SARIMA models ('real', 'speculative')       | Default: 'real'
-    # real: Trained on test data up until PREDICT_INCR_PAST before the current prediction,
-    #               forecasting PREDICT_INCR_AHEAD ahead using real historical data for each forecast.
-    # speculative: Not trained on test data, forecasting PREDICT_INCR_AHEAD ahead,
-    #               using prior predictions, as history for each forecast.
+    # Only takes effect when ARIMA_OOS_FORECASTS is set to -1 (auto)
+    'FORECAST_METHOD' : 'real', # 'real', 'speculative'                                  | Default: 'real'
+    # real: Not trained on test data, forecasting ahead using real historical prices as history for each forecast.
+    # speculative: Not trained on test data, forecasting ahead using prior predictions as history for each forecast.
 
     # Data parameters
     'TRAIN_START' : '2015-01-01',
@@ -161,7 +161,7 @@ SETTINGS = {
     'SARIMA_TEST' : 'adf',          # statistical test to use for determining stationarity
 }
 # Merge ensemble parameters (both models)
-COMPARISON_PARAMS_DICT['ENSEMBLE'] = COMPARISON_PARAMS_DICT[SETTINGS['ENSEMBLE_MODEL']] + COMPARISON_PARAMS_DICT['LSTM']
+COMP_PARAMS_DICT['ENSEMBLE'] = COMP_PARAMS_DICT[SETTINGS['ENSEMBLE_MODEL']] + COMP_PARAMS_DICT['LSTM']
 SETTINGS['CELL_NAME'] = str(CELL).rsplit(sep='.', maxsplit=1)[-1].rsplit(sep="'", maxsplit=1)[0]
 
 #------------------------------------------------------------------------------
@@ -847,12 +847,14 @@ def run_model(settings):
     time_ended = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     run_name = f"{settings['COMPANY']}_-_{time_ended}"
     run_filepath = f'./logs/{settings["TEST_NAME"]}/{run_name}'
-    log_console_file(run_name, f"Model1 fitting finished at: {time_ended}, setting run_name to: {run_name}")
+    log_console_file(run_name, f"\n------------------\nModel {settings['CELL_NAME']} finished running at {time_ended}\nTotal Duration: {dt.datetime.strptime(time_ended, '%Y%m%d-%H%M%S') - dt.datetime.strptime(time_started, '%Y%m%d-%H%M%S')}\n------------------\nSummary:")
     log_console_file(run_name, model1.summary()) # Print model summary
 
     # Create a directory for the run
     if not os.path.exists(os.path.join(f"./logs/{settings['TEST_NAME']}/", run_name)):
         os.makedirs(os.path.join(f"./logs/{settings['TEST_NAME']}/", run_name))
+
+    log_console_file(run_name, 'Plotting loss history...')
 
     # Access loss_history dict after training
     loss_history = history_callback.loss_history
@@ -895,8 +897,12 @@ def run_model(settings):
 
         ## Save loss history
         loss_df = pd.DataFrame(loss_history)
+
+        log_console_file(run_name, f'Saving Loss to {run_filepath}/loss_LSTM.csv')
         # Save the dataframe to CSV
         loss_df.to_csv(f'{run_filepath}/loss_LSTM.csv')
+
+    log_console_file(run_name, f'Saving Model to {run_filepath}/lstm.keras')
 
     # Save model
     model1.save(f'{run_filepath}/lstm.keras')
@@ -907,7 +913,7 @@ def run_model(settings):
 
 
     # ------------------------ ARIMA AND SARIMA ------------------------
-
+    
     # ARIMA AND SARIMA
     # ARIMA and SARIMA are statistical models that use time series data to predict future values.
     # ARIMA: AutoRegressive Integrated Moving Average | SARIMA: Seasonal AutoRegressive Integrated Moving Average
@@ -925,28 +931,34 @@ def run_model(settings):
     sarima_train_con = loaded_data['resampled_df'][settings['PRICE_VALUE']]
 
     # Plot the decomposed time series to see the trend, seasonality, and residuals
+    log_console_file(run_name, "Plotting SARIMA Decomposition...")
     plt.rc('figure',figsize=(12,8))
     plt.rc('font',size=15)
     decomp_result = seasonal_decompose(sarima_train_con, model = 'additive', period = settings['LAGS_VAL'])
     fig = decomp_result.plot()
-    plt.legend()
+    log_console_file(run_name, f"Saving SARIMA Decomposition Plot to {run_filepath}/SARIMA_decomp_plot.jpg")
     plt.savefig(f'{run_filepath}/SARIMA_decomp_plot.jpg', dpi = 300, bbox_inches='tight')
 
     # Plot the ACF and PACF plots. These can be used to determine the hyperparameters p, d, and q.
     # The ACF plot (Autocorrelation Function) shows the correlation of the series with itself,
     # lagged by x time units. The PACF plot (Partial Autocorrelation Function) shows the correlation
     # between the series and its lag, after removing the effect of previous lags.
+    log_console_file(run_name, "Plotting SARIMA ACF and PACF...")
     fig1 = plot_acf(sarima_train_con, lags = settings["LAGS_VAL"])
     plt.title(f'ACF Plot for {settings["COMPANY"]} Stock Price')
+    log_console_file(run_name, f"Saving SARIMA ACF Plot to {run_filepath}/SARIMA_acf_plot.jpg")
     fig1.savefig(f'{run_filepath}/SARIMA_acf_plot.jpg', dpi = 300, bbox_inches = 'tight')
     fig2 = plot_pacf(sarima_train_con, lags = settings["LAGS_VAL"])
     plt.title(f'PACF Plot for {settings["COMPANY"]} Stock Price')
+    log_console_file(run_name, f"Saving SARIMA PACF Plot to {run_filepath}/SARIMA_pacf_plot.jpg")
     fig2.savefig(f'{run_filepath}/SARIMA_pacf_plot.jpg', dpi = 300, bbox_inches = 'tight')
 
     #------------------------------------------------------------------------------
     # Test the model accuracy on existing data
     #------------------------------------------------------------------------------
-    # Load the test data
+    log_console_file(run_name, "\n------------------\n----| Testing Model Accuracy\n------------------\n")
+
+    #Load the test data
     test_data = loaded_data['test_df']
 
     actual_close_prices = loaded_data['test_df'][settings['PRICE_VALUE']]
@@ -961,6 +973,8 @@ def run_model(settings):
     for t, feat in enumerate(settings['FEATURE_COLUMNS']):
         model_inputs[:, t] = loaded_data["column_scaler"][feat].transform(model_inputs[:, t].reshape(-1, 1)).reshape(-1)
 
+    log_console_file(run_name, f"Creating model inputs from {loaded_data['TEST_START']} to {loaded_data['TEST_END']}...")
+
     #------------------------------------------------------------------------------
     # Predict on Test Data
     #------------------------------------------------------------------------------
@@ -973,22 +987,26 @@ def run_model(settings):
     # x_train:      (998, 60, 5)    | 2016-01-01 to 2019-12-31 | Normalized Values |
 
     # -- ARIMA
+    log_console_file(run_name, "------------------\n----| ARIMA\n------------------")
     model2 = sm.tsa.ARIMA(
         sarima_train_con, # Create ARIMA model with Close price as target
         order=(settings["ARIMA_P"], settings["ARIMA_D"], settings["ARIMA_Q"]), # p, d, and q hyperparameters
         freq= settings["RESAMPLE_FREQ"]) # Resample frequency
 
     # Fit the model
+    log_console_file(run_name, f"Fitting ARIMA model to {sarima_train_con.index[0]} to {sarima_train_con.index[-1]}")
     arima_results = model2.fit()
     log_console_file(run_name, arima_results.summary())
 
+    # Plot the ARIMA model diagnostics and save the figure
     arima_results.plot_diagnostics(figsize = (16, 8))
-    plt.legend()
+    log_console_file(run_name, f"Saving ARIMA Diagnostics Plot to {run_filepath}/ARIMA_diagnostics.jpg")
     plt.savefig(f'{run_filepath}/ARIMA_diagnostics.jpg', dpi = 300, bbox_inches = 'tight')
     if DISPLAY_PLOTS:
         plt.show()
 
     # -- SARIMA
+    log_console_file(run_name, "------------------\n----| SARIMA\n------------------\nPerforming Grid Search... (this might take a while!)")
     # Perform grid search to find the best hyperparameters for the SARIMA model
     model3 = pm.auto_arima(
         y = sarima_train_con, test = settings['SARIMA_TEST'],
@@ -1011,6 +1029,7 @@ def run_model(settings):
     settings['arima_order'] = str(model2.order)
 
     # Train the SARIMA model
+    log_console_file(run_name, f"Fitting SARIMA model to {sarima_train_con.index[0]} to {sarima_train_con.index[-1]}")
     sarima_results = model3.fit(sarima_train_con)
 
     # Print the SARIMA model summary
@@ -1018,11 +1037,12 @@ def run_model(settings):
 
     # Plot the SARIMA model diagnostics and save the figure
     sarima_results.plot_diagnostics(figsize=(16, 8))
-    plt.legend()
+    log_console_file(run_name, f"Saving SARIMA Diagnostics Plot to {run_filepath}/SARIMA_diagnostics.jpg")
     plt.savefig(f'{run_filepath}/SARIMA_diagnostics.jpg', dpi=300, bbox_inches='tight')
 
     # Define the forecast index as a range of dates from the start to the end of the test set
     forecast_index = pd.date_range(loaded_data['TEST_START'], loaded_data['TEST_END'], freq = settings['RESAMPLE_FREQ'])
+    log_console_file(run_name, f"Creating forecast index from {loaded_data['TEST_START']} to {loaded_data['TEST_END']}")
 
     # If we remove the testing data from the training data, we can test the ARIMA model out-of-sample capabilities
     if settings['ARIMA_OOS_FORECASTS'] > 0:
@@ -1032,10 +1052,10 @@ def run_model(settings):
         if settings['FORECAST_METHOD'] == 'speculative':
             sarima_train_con = sarima_train_con.loc[:loaded_data['TEST_START']]
 
+    log_console_file(run_name, f"Creating SARIMA forecast test sequence list from {forecast_index[0]} to {forecast_index[-1]}")
+
     # Copy the SARIMA training data to a new variable for dynamic forecasting
     sarima_train_dyn = sarima_train_con.copy()
-
-    log_console_file(run_name, f'Refitting ARIMA model to {sarima_train_dyn.index[0]} to {sarima_train_dyn.index[-1]}')
 
     # Define the columns for the forecasts dataframe
     cols = ['ARIMA', 'SARIMA']
@@ -1043,7 +1063,7 @@ def run_model(settings):
     # Create a new dataframe to store the forecasts
     forecasts = pd.DataFrame(index=forecast_index, columns=cols)
     if settings['USE_SARIMA'] or settings['USE_ARIMA']:
-        log_console_file(run_name, '------------------\nBEGINNING ARIMA/SARIMA FORECASTING\n------------------')
+        log_console_file(run_name, '------------------\n----| BEGINNING ARIMA/SARIMA FORECASTING\n------------------')
                 
         # Loop through the date range
         for date_i in range(0, len(forecast_index)):
@@ -1054,9 +1074,7 @@ def run_model(settings):
 
                 elif settings['ARIMA_OOS_FORECASTS'] == -1:
                     if settings['FORECAST_METHOD'] == 'speculative':
-                        sarima_train_dyn = sarima_train_dyn.loc[:forecasts.index[date_i]]
-                        print(forecasts.index[date_i])
-                        
+                        sarima_train_dyn = sarima_train_dyn.loc[:forecasts.index[date_i]]                      
                     else:
                         sarima_train_dyn = sarima_train_con.loc[:forecasts.index[date_i]]
 
@@ -1066,7 +1084,6 @@ def run_model(settings):
                         order = (settings["ARIMA_P"], settings["ARIMA_D"], settings["ARIMA_Q"]), # p, d, and q hyperparameters
                         freq = settings["RESAMPLE_FREQ"]) # Resample frequency
                     arima_results = model2.fit()
-
             
             # Get the start and end dates for the forecast period
             start_fc = forecasts.index[date_i]
@@ -1082,7 +1099,7 @@ def run_model(settings):
                 if settings['FORECAST_METHOD'] == 'speculative':
                     fcast_sarima = sarima_results.fit_predict(y=sarima_train_dyn, n_periods=1)
                 else:
-                    fcast_sarima = sarima_results.fit_predict(y=sarima_train_dyn.iloc[:1], n_periods=1)
+                    fcast_sarima = sarima_results.fit_predict(y=sarima_train_dyn.iloc[:-1], n_periods=1)
 
                 # Convert the SARIMA forecast to a pandas series with the forecast index
                 sarima_fcast_series = pd.Series(fcast_sarima, index=fcast_sarima.index)
@@ -1099,11 +1116,11 @@ def run_model(settings):
                 forecasts.loc[start_fc:start_fc, 'SARIMA'] = sarima_fcast_series
                 log_console_file(run_name, f'         - SARIMA - ({sarima_fcast_series.index[0]}): {sarima_fcast_series.values}')
 
-        log_console_file(run_name, '------------------\nCOMPLETED ARIMA/SARIMA FORECASTING\n------------------')
-        forecasts.fillna(method='ffill', inplace=True)
-        # Print the forecasts dataframe (for debugging)
-        #log_console_file(run_name, f'------\nForecasts: {forecasts}\n------\n')
+        log_console_file(run_name, '------------------\n----| COMPLETED ARIMA/SARIMA FORECASTING\n------------------')
+        forecasts.ffill()
 
+    #------------------------------------------------------------------------------
+    log_console_file(run_name, '\n------------------\n----| BEGINNING LSTM FORECASTING\n------------------\n')
     # Number of predictions to make
     x_test = []
     
@@ -1116,12 +1133,14 @@ def run_model(settings):
     x_test = np.array(x_test)
 
     # Predict prices using LSTM model
+    log_console_file(run_name, f'Batch predicting {len(x_test)} sequences of {settings["PREDICT_INCR_PAST"]} days...')
     real_predicted_prices_lstm = model1.predict(x_test)
 
     # Create a dataframe to store the predicted prices
     predicted_prices_lstm = pd.DataFrame(index=test_data.index, columns=[settings['PRICE_VALUE']])
 
     # Inverse transform the predicted prices and add them to the dataframe
+    log_console_file(run_name, 'Inverse transforming predicted prices...')
     for feat in settings['FEATURE_COLUMNS']:
         predicted_prices_lstm[feat] = loaded_data["column_scaler"][feat].inverse_transform(real_predicted_prices_lstm).reshape(-1)
 
@@ -1136,9 +1155,11 @@ def run_model(settings):
         axis.set_xlabel("Date")
         axis.set_ylabel("Price")
         # Rotate the x-axis labels by 45 degrees for readability
+        axis.set_xticks(axis.get_xticks())
         axis.set_xticklabels(axis.get_xticklabels(), rotation=45)
         plt.title('ARIMA & SARIMA Price Prediction')
-        plt.legend()
+        axis.legend()
+        log_console_file(run_name, f"Saving ARIMA & SARIMA Forecast Plot to {run_filepath}/arima_sarima_comparison.jpg")
         plt.savefig(f'{run_filepath}/arima_sarima_comparison.jpg', dpi=300, bbox_inches='tight')
 
 
@@ -1152,8 +1173,8 @@ def run_model(settings):
     predicted_prices_sarima = pd.DataFrame(index=forecasts.index)
     predicted_prices_sarima[settings['PRICE_VALUE']] = forecasts['SARIMA'].values
 
-
     # Calculate the error and error percentage for the predicted prices from the LSTM model
+    log_console_file(run_name, 'Calculating error and error percentage for predicted prices...')
     predicted_prices_lstm['price_error'] = predicted_prices_lstm[settings['PRICE_VALUE']] - actual_close_prices.values
     predicted_prices_lstm['price_error_percent'] = predicted_prices_lstm['price_error'] / actual_close_prices.values
 
@@ -1168,32 +1189,37 @@ def run_model(settings):
     predicted_prices_sarima['price_error_percent'] = predicted_prices_sarima['price_error'] / actual_resampled_close_prices
 
     # Create an empty dataframe for the ensemble model predictions
-    predicted_prices_ensemble = pd.DataFrame(index=test_data.index)#forecasts.index)
+    log_console_file(run_name, 'Creating empty dataframe for ensemble model predictions...')
+    predicted_prices_ensemble = pd.DataFrame(index=test_data.index)
 
     # Ensemble | Average prediction between SARIMA/ARIMA and LSTM model
     # ARIMA and SARIMA outputs are in a different frequency than the LSTM model,
     # so we need to resample to daily frequency before averaging them with the LSTM model
-    predicted_prices_ensemble[settings['PRICE_VALUE']] = (predicted_prices_lstm[settings['PRICE_VALUE']] + predicted_prices_sarima[settings['PRICE_VALUE']].resample('D').interpolate(method='pad')) / 2#interpolate(method='linear').ffill()) / 2
+    log_console_file(run_name, 'Ensembling predictions...')
+    predicted_prices_ensemble[settings['PRICE_VALUE']] = (predicted_prices_lstm[settings['PRICE_VALUE']] + predicted_prices_sarima[settings['PRICE_VALUE']].resample('D').ffill()) / 2#interpolate(method='linear').ffill()) / 2
     
     # Fill both ends for any NaN values (likely a better way to do this)
-    predicted_prices_ensemble.fillna(method='bfill', inplace=True)
-    predicted_prices_ensemble.fillna(method='ffill', inplace=True)#.dropna(inplace=True)
+    log_console_file(run_name, 'Filling any NaN values...')
+    predicted_prices_ensemble.ffill(inplace=True)
+    predicted_prices_ensemble.bfill(inplace=True)
     
     # Calculate the error and error percentage for the predicted prices from the ensemble model
     predicted_prices_ensemble['price_error'] = predicted_prices_ensemble[settings['PRICE_VALUE']] - actual_close_prices.loc[predicted_prices_ensemble.index[0]:predicted_prices_ensemble.index[-1]].values
     predicted_prices_ensemble['price_error_percent'] = predicted_prices_ensemble['price_error'] / actual_close_prices.loc[predicted_prices_ensemble.index[0]:predicted_prices_ensemble.index[-1]].values
 
     # Log the predicted prices and errors for each model to the console
-    log_console_file(run_name, f'------------------\n - LSTM Prediction Sample:\n{predicted_prices_lstm}\n------------------\n')
-    log_console_file(run_name, f'------------------\n - ARIMA Prediction Sample:\n{predicted_prices_arima}\n------------------\n')
-    log_console_file(run_name, f'------------------\n - SARIMA Prediction Sample:\n{predicted_prices_sarima}\n------------------\n')
-    log_console_file(run_name, f'------------------\n - ENSEMBLE Prediction Sample:\n{predicted_prices_ensemble}\n------------------\n')
-
+    log_console_file(run_name, '------------------\n----| Predictions and Errors:\n------------------\n')
+    log_console_file(run_name, f' - LSTM Prediction Sample:\n{predicted_prices_lstm}\n---------\n')
+    log_console_file(run_name, f' - ARIMA Prediction Sample:\n{predicted_prices_arima}\n---------\n')
+    log_console_file(run_name, f' - SARIMA Prediction Sample:\n{predicted_prices_sarima}\n---------\n')
+    log_console_file(run_name, f' - ENSEMBLE Prediction Sample:\n{predicted_prices_ensemble}\n---------\n')
+    log_console_file(run_name, '------------------\n----| Forecasting Complete\n------------------\n')
     #------------------------------------------------------------------------------
     # Save predictions
     #------------------------------------------------------------------------------
 
     # Save settings to a JSON file in the run directory
+    log_console_file(run_name, f'Saving settings to {run_filepath}/settings.json')
     save_settings(settings, f'{run_filepath}/settings.json')
 
     # Convert settings dictionary to a DataFrame (via str first to avoid errors)
@@ -1211,6 +1237,7 @@ def run_model(settings):
 
     ## Save predictions to CSV
     # Convert predicted prices to DataFrames and save them to CSV files
+    log_console_file(run_name, f'Saving predictions to {run_filepath}/...')
     pd.DataFrame(predicted_prices_lstm).to_csv(f'{run_filepath}/LSTM.csv')
     pd.DataFrame(predicted_prices_arima).to_csv(f'{run_filepath}/ARIMA.csv')
     pd.DataFrame(predicted_prices_sarima).to_csv(f'{run_filepath}/SARIMA.csv')
@@ -1221,6 +1248,7 @@ def run_model(settings):
     # Plot the test predictions
     #------------------------------------------------------------------------------
     if PLOT_INDIVIDUAL_RUN:
+        log_console_file(run_name, 'Plotting individual runs...')
         # Plot the candlestick chart for the test data.
         plot_candlestick_chart(test_data, CANDLE_VIS_WINDOW,
              f"{settings['COMPANY']} Stock Price Chart", run_name, settings['TEST_NAME'])
@@ -1230,6 +1258,7 @@ def run_model(settings):
                            run_name=run_name, test_name=settings['TEST_NAME'], label_skips=28)
 
     if PLOT_ENSEMBLE:
+        log_console_file(run_name, 'Plotting ensemble runs...')
         prediction_log = "Predictions: "
         predictions_all = []
         if settings['USE_LSTM']:
@@ -1268,14 +1297,14 @@ if COMPARE_RUNS:
     if COMPARE_LOSS:
         # Default values will compare loss between LSTM models
         loss_plot_title = f"Training Loss History Comparison \n[{SETTINGS['DATA_SOURCE']}, {SETTINGS['COMPANY']}. [{SETTINGS['TRAIN_START']} - {SETTINGS['TRAIN_END']}]"
-        compare_runs(TEST_NAME, COMPARISON_PARAMS_DICT['LSTM'], loss_plot_title)
+        compare_runs(TEST_NAME, COMP_PARAMS_DICT['LSTM'], loss_plot_title)
     
     if COMPARE_PREDICTIONS:
-        for prd in COMPARISON_PREDICTION_MODELS:
-            for colkey, colval in COMPARISON_PREDICTION_COLUMN.items():
-                prms = COMPARISON_PARAMS_DICT[prd].copy()
-                # prms == list of strings | Needs to be merged with COMPARE_GLOBAL_PARAMS_LIST
-                prms.extend(COMPARE_GLOBAL_PARAMS_LIST)
+        for prd in COMP_PREDICT_MODELS:
+            for colkey, colval in COMP_PREDICT_COLUMN.items():
+                prms = COMP_PARAMS_DICT[prd].copy()
+                # prms == list of strings | Needs to be merged with COMP_GLBL_PARAMS
+                prms.extend(COMP_GLBL_PARAMS)
 
                 plt_title = f"{prd} - {colkey} \n[{SETTINGS['DATA_SOURCE']}, {SETTINGS['COMPANY']}. [{SETTINGS['TRAIN_START']} - {SETTINGS['TRAIN_END']}]"
                 compare_runs(TEST_NAME, prms, plt_title, prd, colkey, DISPLAY_PLOTS, SETTINGS['SEASONAL_PERIOD']//2, colval)
